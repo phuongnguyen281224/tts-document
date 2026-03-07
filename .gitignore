@@ -2,18 +2,50 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 venv/
-.env
+.venv/
+ENV/
 
 # IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Project specific
 temp_uploads/
 temp_outputs/
 completed_audios/
 *.log
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Celery
+celerybeat-schedule
+*.pid
+
+# Database
+*.sqlite3
 
 # Audio files (root)
 *.mp3
