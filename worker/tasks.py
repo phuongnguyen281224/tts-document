@@ -24,24 +24,46 @@ def get_tts_engine():
     return _tts_engine
 
 import celery
+from datetime import datetime
+from app.database import SessionLocal
+from app.models import AudioJob
 
 class CleanupTask(celery.Task):
     """
     Base Task class to ensure temporary files are deleted after the task
     finishes successfully or fails completely (after retries).
+    Also updates the persistent database with the final status.
     """
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         super().after_return(status, retval, task_id, args, kwargs, einfo)
         print(f"[{task_id}] after_return triggered with status: {status}", flush=True)
-        # We only clean up when the task is fully resolved, not when it's retrying
-        if status in ['SUCCESS', 'FAILURE'] and len(args) > 0:
-            file_path = args[0]
-            if isinstance(file_path, str) and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    print(f"[{task_id}] Tự động dọn dẹp tệp tạm thành công: {file_path}", flush=True)
-                except Exception as e:
-                    print(f"[{task_id}] Lỗi khi dọn dẹp tệp tạm {file_path}: {e}", flush=True)
+        
+        # We only clean up and finalize DB when the task is fully resolved (not retrying)
+        if status in ['SUCCESS', 'FAILURE', 'REVOKED']:
+            # 1. Update Database
+            db = SessionLocal()
+            try:
+                job = db.query(AudioJob).filter(AudioJob.task_id == task_id).first()
+                if job:
+                    job.status = status
+                    job.finished_at = datetime.utcnow()
+                    db.commit()
+                    print(f"[{task_id}] Đã cập nhật trạng thái '{status}' vào Database.", flush=True)
+            except Exception as e:
+                db.rollback()
+                print(f"[{task_id}] Lỗi khi cập nhật Database: {e}", flush=True)
+            finally:
+                db.close()
+                
+            # 2. Cleanup Temporary Files
+            if len(args) > 0:
+                file_path = args[0]
+                if isinstance(file_path, str) and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        print(f"[{task_id}] Tự động dọn dẹp tệp tạm thành công: {file_path}", flush=True)
+                    except Exception as e:
+                        print(f"[{task_id}] Lỗi khi dọn dẹp tệp tạm {file_path}: {e}", flush=True)
 
 @celery_app.task(
     base=CleanupTask,
@@ -164,7 +186,7 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
             "final_mp3_path":   os.path.abspath(final_mp3_path) if final_mp3_path else None,
             "char_count_raw":   char_count,
             "chunk_count":      chunk_count,
-            "retries":          retries,
+            "retries":          self.request.retries,
         }
 
     except Exception as e:

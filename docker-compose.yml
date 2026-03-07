@@ -6,3 +6,13 @@ services:
     ports:
       - "6379:6379"
     restart: always
+
+  flower:
+    image: mher/flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    restart: always

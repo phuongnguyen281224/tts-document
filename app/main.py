@@ -10,7 +10,27 @@ from celery.result import AsyncResult
 from worker.celery_app import celery_app
 from worker.tasks import process_pdf_task
 
+# Import routers and DB components
+from app.routers import health
+from app import models, database
+from sqlalchemy.orm import Session
+
+# Initialize database tables
+models.Base.metadata.create_all(bind=database.engine)
+
+# OpenTelemetry Instrumentation
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from app.telemetry import setup_telemetry
+
+# Khởi tạo Global Tracer Provider cho toàn bộ ứng dụng API
+setup_telemetry("fastapi-server")
+
 app = FastAPI(title="Async PDF Processing API")
+app.include_router(health.router)
+
+# Tự động bắt mọi request vào FastAPI và tạo Span. 
+# Từ đây, Trace ID sẽ tự sinh hoặc lấy từ request header nếu client có cấp.
+FastAPIInstrumentor.instrument_app(app)
 
 class TaskResponse(BaseModel):
     task_id: str
@@ -64,7 +84,23 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
         await out_file.write(content)
             
-    # 5. Trigger the Celery background task
+    # 5. Create a database record for this job
+    db: Session = database.SessionLocal()
+    try:
+        new_job = models.AudioJob(
+            task_id=task_id,
+            filename=clean_filename,
+            status="PENDING"
+        )
+        db.add(new_job)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to create DB record: {e}")
+    finally:
+        db.close()
+
+    # 6. Trigger the Celery background task
     abs_path = os.path.abspath(file_path)
     # Pass the generated task_id to Celery's apply_async for explicit task ID
     process_pdf_task.apply_async(args=[abs_path], task_id=task_id)
@@ -111,6 +147,25 @@ async def download_audio(task_id: str):
     return FileResponse(
         path=file_path,
         media_type="audio/mpeg",
-        filename=f"{task_id}_final.mp3"
+        filename=os.path.basename(file_path)
     )
 
+@app.delete("/tasks/{task_id}", response_model=TaskResponse)
+async def cancel_task(task_id: str):
+    """
+    Hủy ngang một tác vụ đang chạy trên Celery.
+    - Gọi lệnh thu hồi (revoke) kèm theo tín hiệu ép buộc dừng (terminate=True).
+    - Lệnh này sẽ tiêu diệt process của worker nếu nó đang kẹt tính toán AI.
+    """
+    try:
+        # Request celery to revoke the task. terminate=True kills the process executing it.
+        celery_app.control.revoke(task_id, terminate=True, signal='SIGTERM')
+        return TaskResponse(
+            task_id=task_id, 
+            message="Yêu cầu hủy tác vụ đã được gửi thành công. Trạng thái task sẽ chuyển sang REVOKED."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Lỗi khi gửi lệnh hủy tác vụ: {str(e)}"
+        )

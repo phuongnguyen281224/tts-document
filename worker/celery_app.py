@@ -1,5 +1,14 @@
 from celery import Celery
 
+# OpenTelemetry Instrumentation
+from opentelemetry.instrumentation.celery import CeleryInstrumentor
+from app.telemetry import setup_telemetry
+
+# Khởi tạo Global Tracer Provider và nối OTel vào Celery ngay lập tức
+# Việc này đảm bảo Trace ID sẽ được chèn vào Headers của Redis message
+setup_telemetry("celery-worker")
+CeleryInstrumentor().instrument()
+
 celery_app = Celery(
     "pdf_worker",
     broker="redis://localhost:6379/0",
