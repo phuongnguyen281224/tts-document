@@ -1,6 +1,7 @@
 import os
+import uuid
 import aiofiles
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from celery.result import AsyncResult
@@ -15,30 +16,60 @@ class TaskResponse(BaseModel):
     task_id: str
     message: str
 
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
 @app.post("/upload-pdf/", response_model=TaskResponse)
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Endpoint to receive a PDF file, immediately assign a task ID,
+    Endpoint to receive a PDF file, validate security requirements,
     and process it asynchronously via Celery.
     """
-    
-    # Save the file to a temporary directory
+    # 1. Validate Content-Type
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Chỉ chấp nhận tệp định dạng PDF (application/pdf)."
+        )
+
+    # 2. Check File Size
+    # FastAPI's UploadFile attempts to get size automatically
+    if file.size and file.size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Tệp quá lớn. Giới hạn tối đa là {MAX_FILE_SIZE // (1024*1024)}MB."
+        )
+
+    # 3. Sanitize filename and generate UUID
     upload_dir = "temp_uploads"
     os.makedirs(upload_dir, exist_ok=True)
     
-    file_path = os.path.join(upload_dir, file.filename)
+    # Secure filename: uuid_originalName
+    clean_filename = os.path.basename(file.filename)
+    task_id = str(uuid.uuid4())
+    unique_filename = f"{task_id}_{clean_filename}"
+    file_path = os.path.join(upload_dir, unique_filename)
     
-    # Write the content locally without blocking
+    # 4. Save the file locally without blocking
     async with aiofiles.open(file_path, 'wb') as out_file:
         content = await file.read()
+        # Double check size if file.size was None
+        if len(content) > MAX_FILE_SIZE:
+             # Cleanup if metadata check failed but actual content is huge
+             # Ensure the file is closed before attempting to remove it
+             await out_file.close()
+             os.remove(file_path) 
+             raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Tệp quá lớn. Giới hạn tối đa là {MAX_FILE_SIZE // (1024*1024)}MB."
+            )
         await out_file.write(content)
             
-    # Trigger the Celery background task
+    # 5. Trigger the Celery background task
     abs_path = os.path.abspath(file_path)
-    task = process_pdf_task.delay(abs_path)
+    # Pass the generated task_id to Celery's apply_async for explicit task ID
+    process_pdf_task.apply_async(args=[abs_path], task_id=task_id)
     
-    # Return the genuine task ID immediately
-    return {"task_id": task.id, "message": "File đã được xử lý nền"}
+    return {"task_id": task_id, "message": "File đã được xử lý nền"}
 
 @app.get("/task-status/{task_id}")
 async def get_task_status(task_id: str):

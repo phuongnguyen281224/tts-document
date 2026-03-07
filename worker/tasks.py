@@ -23,18 +23,43 @@ def get_tts_engine():
         _tts_engine = VietnameseTTS(use_fp16=True)
     return _tts_engine
 
-@celery_app.task(bind=True, name="process_pdf")
+import celery
+
+class CleanupTask(celery.Task):
+    """
+    Base Task class to ensure temporary files are deleted after the task
+    finishes successfully or fails completely (after retries).
+    """
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        super().after_return(status, retval, task_id, args, kwargs, einfo)
+        print(f"[{task_id}] after_return triggered with status: {status}", flush=True)
+        # We only clean up when the task is fully resolved, not when it's retrying
+        if status in ['SUCCESS', 'FAILURE'] and len(args) > 0:
+            file_path = args[0]
+            if isinstance(file_path, str) and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"[{task_id}] Tự động dọn dẹp tệp tạm thành công: {file_path}", flush=True)
+                except Exception as e:
+                    print(f"[{task_id}] Lỗi khi dọn dẹp tệp tạm {file_path}: {e}", flush=True)
+
+@celery_app.task(
+    base=CleanupTask,
+    bind=True, 
+    name="process_pdf",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3
+)
 def process_pdf_task(self, file_path: str, prompt_path: str = None):
     """
-    Task xử lý PDF qua toàn bộ pipeline:
-      1. Trích xuất văn bản  (PyMuPDF + OCR fallback)
-      2. Chuẩn hóa tiếng Việt (soe-vinorm)
-      3. Phân mảnh chunk      (chunklet-py, clause-level overlap)
-      4. Sinh Audio (TTS) với IndexTTS2, VRAM GC, FP16
-      5. Lưu kết quả ra disk  ({task_id}.txt  và  {task_id}_chunks.json) cùng các file .wav
+    Task xử lý PDF qua toàn bộ pipeline.
+    Đã tích hợp retry strategy với exponential backoff.
     """
     task_id = self.request.id
-    print(f"[{task_id}] === BƯỚC 1: Bắt đầu trích xuất PDF: {file_path}", flush=True)
+    
+    # Gỡ bỏ các log in thử nghiệm và lỗi giả lập
+    print(f"[{task_id}] TRẠNG THÁI: Bắt đầu xử lý PDF: {file_path}", flush=True)
 
     try:
         # ------------------------------------------------------------------ #
@@ -47,7 +72,7 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         # ------------------------------------------------------------------ #
         # Bước 2 & 3 — NLP: Chuẩn hóa tiếng Việt + Phân mảnh chunk
         # ------------------------------------------------------------------ #
-        print(f"[{task_id}] === BƯỚC 2–3: Chạy NLP pipeline (Dọn dẹp → Normalize → Chunk)...", flush=True)
+        print(f"[{task_id}] === BƯỚC 2–3: Chạy NLP pipeline...", flush=True)
         
         chunks = process_text_for_tts(extracted_text)
         chunk_count = len(chunks)
@@ -62,7 +87,7 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         print(f"[{task_id}] === BƯỚC 4: Bắt đầu sinh âm thanh qua IndexTTS2 Engine...", flush=True)
         tts = get_tts_engine()
         
-        # Audio test mồi zero-shot (Cần file dummy mồi dưới 15 giây lưu sẵn)
+        # Audio test mồi
         if prompt_path and os.path.exists(prompt_path):
             spk_prompt = prompt_path
         else:
@@ -73,63 +98,46 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         
         audio_files = []
         for i, chunk_text in enumerate(chunks):
-            # Lưu file theo định dạng {task_id}_chunk_{0:04d}.wav để bảo đảm sequence
             chunk_audio_path = os.path.join(OUTPUT_DIR, f"{task_id}_chunk_{i:04d}.wav")
             print(f"[{task_id}] Đang sinh audio cho chunk {i+1}/{chunk_count}...", flush=True)
             
             try:
-                # Khởi chạy TTS process. `use_emo_text=True` để LLM tự phân tích emotion.
                 tts.synthesize_chunk(
                     text=chunk_text,
                     spk_prompt_path=spk_prompt,
                     output_filename=chunk_audio_path,
-                    use_emo_text=True,    # Mặc định LLM đoán mảng
-                    emo_alpha=0.6         # Mức độ khuếch đại tự nhiên nhất
+                    use_emo_text=True,
+                    emo_alpha=0.6
                 )
             except Exception as e:
                 print(f"[{task_id}] Sinh âm thất bại cho chunk {i+1}: {e}", flush=True)
-                # Fail gracefully và tiếp tục với các đoạn sau ngắt quãng
                 continue
                 
             audio_files.append(os.path.abspath(chunk_audio_path))
-            print(f"[{task_id}] Chunk {i+1} xong -> {chunk_audio_path}", flush=True)
-            
-            # --- VRAM Management Constraint ---
-            # Bắt buộc gọi GC sau mỗi vòng lặp tránh Python memory leak khi reference audio variable chưa giải phóng
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
         # ------------------------------------------------------------------ #
-        # Bước 5 — Nối các file audio với pydub và lưu thành MP3
+        # Bước 5 — Nối các file audio và lưu thành MP3
         # ------------------------------------------------------------------ #
         print(f"[{task_id}] === BƯỚC 5: Đang nối {len(audio_files)} files âm thanh...", flush=True)
         final_mp3_path = None
         
         try:
-            # 1. Load các file wav thành cấu trúc dữ liệu
             audio_segments = [AudioSegment.from_wav(f) for f in audio_files]
-            
-            # 2. Xử lý logic ghép nối có crossfade từ module
             combined_audio = concatenate_audio(audio_segments, crossfade_ms=50)
             
-            # 3. Định hình thư mục lưu MP3 hoàn chỉnh
             os.makedirs(COMPLETED_DIR, exist_ok=True)
             final_mp3_path = os.path.join(COMPLETED_DIR, f"{task_id}_final.mp3")
             
-            # 4. Xuất file MP3 và có thể làm sạch rác (tuy nhiên ta tự xóa file list bên dưới để tránh đụng độ multithread)
-            # Hàm export_and_cleanup của module hỗ trợ xóa Temp Dir nhưng OUTPUT_DIR này chứa chung file của task khác
             combined_audio.export(final_mp3_path, format="mp3")
             print(f"[{task_id}] Hậu kỳ thành công! Đã lưu MP3 tại: {final_mp3_path}")
             
-            # 5. Dọn dẹp chỉ định các file wav phân mảnh thuộc riêng task id này
             for f in audio_files:
                 if os.path.exists(f):
-                    try:
-                        os.remove(f)
-                    except Exception as ex:
-                        print(f"[{task_id}] Không thể xóa file rác {f}: {ex}")
-            print(f"[{task_id}] Đã xóa dọn dẹp {len(audio_files)} .wav file sau lưu hậu kỳ thành công.")
+                    try: os.remove(f)
+                    except: pass
             
         except Exception as e:
             print(f"[{task_id}] Lỗi trong quá trình nối Audio Processing: {e}", flush=True)
@@ -148,27 +156,21 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
             json.dump(output_metadata, f, ensure_ascii=False, indent=2)
 
         abs_chunks_path = os.path.abspath(chunks_file_path)
-        print(f"[{task_id}] Đã xử lý tất cả. Metadata -> {abs_chunks_path}", flush=True)
-
         return {
             "status":           "success",
             "task_id":          task_id,
             "source_pdf":       file_path,
             "chunks_file_path": abs_chunks_path,
-            "audio_files":      audio_files,
             "final_mp3_path":   os.path.abspath(final_mp3_path) if final_mp3_path else None,
             "char_count_raw":   char_count,
             "chunk_count":      chunk_count,
+            "retries":          retries,
         }
 
     except Exception as e:
-        print(f"[{task_id}] LỖI: {e}", flush=True)
-        return {
-            "status":     "error",
-            "task_id":    task_id,
-            "source_pdf": file_path,
-            "error":      str(e),
-        }
+        print(f"[{task_id}] LỖI QUY TRÌNH: {e}", flush=True)
+        # We RE-RAISE to let autoretry_for catch it
+        raise e
 
 @celery_app.task(bind=True, name="process_raw_text")
 def process_raw_text_task(self, text: str, prompt_path: str = None):
