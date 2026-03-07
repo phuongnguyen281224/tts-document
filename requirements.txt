@@ -1,0 +1,15 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+celery==5.4.0
+redis==5.0.4
+python-multipart==0.0.9
+PyMuPDF==1.24.5
+pdf2image==1.17.0
+pytesseract==0.3.10
+aiofiles==23.2.1
+requests==2.32.3
+# NLP pipeline — Vietnamese normalization & clause-level chunking
+soe-vinorm>=1.0.0
+chunklet-py>=0.2.0
+vietnormalizer>=0.1.0
+pydub>=0.25.1
