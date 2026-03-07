@@ -96,6 +96,7 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         # ------------------------------------------------------------------ #
         print(f"[{task_id}] === BƯỚC 2–3: Chạy NLP pipeline...", flush=True)
         
+        # process_text_for_tts carries out cleaning, normalization, and chunking
         chunks = process_text_for_tts(extracted_text)
         chunk_count = len(chunks)
 

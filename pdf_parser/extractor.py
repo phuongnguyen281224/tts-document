@@ -45,6 +45,11 @@ def clean_extracted_text(raw_text: str) -> str:
     # (e.g., '---------', '...', '   '). Preserve lines with at least one word char.
     text = re.sub(r'^[\s\W]+$', '', text, flags=re.MULTILINE)
     
+    # Step 4.5: Smart Un-breaking
+    # Join lines that don't end with a punctuation mark, a hyphen, or another newline.
+    # We replace single newlines that split a sentence with a space.
+    text = re.sub(r'(?<![\.\?\!\,\:\;\-\n])\n(?!\n)', ' ', text)
+    
     # Step 5: Collapse 3 or more consecutive blank lines into at most 2.
     text = re.sub(r'\n{3,}', '\n\n', text)
     
@@ -69,6 +74,27 @@ def is_page_number(text: str) -> bool:
         if re.match(p, text_lower):
             return True
     return False
+
+
+def is_code_or_formula(text: str, threshold: float = 0.15) -> bool:
+    """
+    Checks if a text block has a high density of special characters,
+    indicating it's likely a code snippet or mathematical formula.
+    """
+    if not text:
+        return False
+        
+    special_chars = set("{}[]\\_^<>=/+*|@#")
+    special_count = sum(1 for char in text if char in special_chars)
+    
+    # Calculate density based on non-whitespace characters to be more accurate
+    non_ws_count = len("".join(text.split()))
+    
+    if non_ws_count == 0:
+        return False
+        
+    return (special_count / non_ws_count) > threshold
+
 
 def _ocr_page(pdf_path: str, page_num: int) -> str:
     """
@@ -133,13 +159,35 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         blocks = page.get_text("blocks")
         page_height = page.rect.height
         
-        # We only care about text blocks (block_type == 0)
+        # Detect tables to exclude text inside them.
+        tables = page.find_tables()
+        table_bboxes = []
+        if tables.tables:
+            for table in tables.tables:
+                table_bboxes.append(fitz.Rect(table.bbox))
+        
+        # We only care about text blocks (block_type == 0). Image blocks (type == 1) are skipped.
         text_blocks = [b for b in blocks if b[6] == 0]
         
         filtered_blocks = []
         for block in text_blocks:
+            # Check if this text block overlaps with any table
+            block_rect = fitz.Rect(block[:4])
+            overlaps_table = False
+            for t_bbox in table_bboxes:
+                if block_rect.intersects(t_bbox):
+                    overlaps_table = True
+                    break
+            
+            if overlaps_table:
+                continue
+
             text_content = block[4].strip()
             if text_content:
+                # Check for high-density special characters (code/math blocks)
+                if is_code_or_formula(text_content):
+                    text_content = "[Nội dung chứa công thức hoặc đoạn mã đã được hệ thống tự động bỏ qua]"
+                    
                 y0, y1 = block[1], block[3]
                 
                 # Check if it's in the header or footer zone (72 points = 1 inch)
