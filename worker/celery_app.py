@@ -24,4 +24,5 @@ celery_app.conf.update(
     enable_utc=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    broker_transport_options={'visibility_timeout': 3600} # 1 hour timeout for long TTS tasks
 )

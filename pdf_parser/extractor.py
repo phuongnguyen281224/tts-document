@@ -1,6 +1,7 @@
 import os
 import re
 import fitz
+import concurrent.futures
 try:
     import pytesseract
     from pdf2image import convert_from_path
@@ -145,7 +146,9 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         raise FileNotFoundError(f"PDF file not found at: {pdf_path}")
 
     doc = fitz.open(pdf_path)
-    extracted_text_pieces = []
+    total_pages = len(doc)
+    extracted_page_texts = [""] * total_pages
+    pages_to_ocr = []
     
     # Store blocks by page for the two-pass filtering
     pages_blocks = []
@@ -234,19 +237,31 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         # OCR fallback: if the extracted text is suspiciously short, try OCR
         if len(page_body.strip()) < OCR_CHAR_THRESHOLD:
-            print(f"  [OCR] Page {page_num + 1}: low text ({len(page_body.strip())} chars), activating OCR...")
-            ocr_text = _ocr_page(pdf_path, page_num)
-            if ocr_text:
-                extracted_text_pieces.append(f"--- Page {page_num + 1} [OCR] ---")
-                extracted_text_pieces.append(ocr_text)
+            print(f"  [OCR] Page {page_num + 1}: low text ({len(page_body.strip())} chars), scheduling OCR...")
+            pages_to_ocr.append(page_num)
         elif page_text:
-            extracted_text_pieces.append(f"--- Page {page_num + 1} ---")
-            extracted_text_pieces.append(page_body)
+            extracted_page_texts[page_num] = f"--- Page {page_num + 1} ---\n\n{page_body}"
+
+    # Perform Concurrent OCR
+    if pages_to_ocr:
+        max_workers = os.cpu_count() or 4
+        print(f"  [OCR] Starting concurrent OCR for {len(pages_to_ocr)} pages using {max_workers} workers...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {executor.submit(_ocr_page, pdf_path, p): p for p in pages_to_ocr}
+            for future in concurrent.futures.as_completed(future_to_page):
+                page_num = future_to_page[future]
+                try:
+                    ocr_text = future.result()
+                    if ocr_text:
+                        extracted_page_texts[page_num] = f"--- Page {page_num + 1} [OCR] ---\n\n{ocr_text}"
+                except Exception as exc:
+                    print(f"  [OCR] Page {page_num + 1} generated an exception: {exc}")
             
     doc.close()
     
-    # Concatenate all page contents, separating pages by double newlines
-    final_result = "\n\n".join(extracted_text_pieces)
+    # Concatenate all non-empty page contents, separating pages by double newlines
+    final_result = "\n\n".join(filter(None, extracted_page_texts))
     
     # Final cleanup pass: remove garbage characters and normalize whitespace
     return clean_extracted_text(final_result)

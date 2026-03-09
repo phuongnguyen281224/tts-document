@@ -328,6 +328,66 @@ def test_formula_parser():
             print(f"Cleaned up {formula_pdf_path}")
 
 
+import time
+
+def test_concurrent_ocr_benchmark():
+    benchmark_pdf_path = "benchmark_scanned_test.pdf"
+    num_pages = 6
+    
+    try:
+        # Create a multi-page scanned PDF
+        print(f"\n--- Generating {num_pages}-page Scanned PDF for Benchmark ---")
+        source_doc = fitz.open()
+        
+        sample_eng_text = (
+            "This is a sample text document.\n"
+            "Testing multithreaded Tesseract OCR performance.\n"
+            "Content of Page {}"
+        )
+        
+        for i in range(num_pages):
+            src_page = source_doc.new_page(width=595, height=842)
+            src_page.insert_textbox(
+                fitz.Rect(50, 100, 550, 700),
+                sample_eng_text.format(i + 1),
+                fontsize=16, align=0
+            )
+            
+        # Convert to scanned PDF
+        scanned_doc = fitz.open()
+        mat = fitz.Matrix(2, 2)
+        for i in range(num_pages):
+            pix = source_doc[i].get_pixmap(matrix=mat)
+            img_page = scanned_doc.new_page(width=595, height=842)
+            img_page.insert_image(fitz.Rect(0, 0, 595, 842), pixmap=pix)
+        
+        scanned_doc.save(benchmark_pdf_path)
+        source_doc.close()
+        scanned_doc.close()
+        
+        print(f"--- Running Concurrent OCR Extraction on {num_pages} pages ---\n")
+        start_time = time.time()
+        extracted_text = extract_text_from_pdf(benchmark_pdf_path)
+        end_time = time.time()
+        
+        print("====== OCR BENCHMARK RESULT ======")
+        print(f"Time taken to OCR {num_pages} pages: {end_time - start_time:.2f} seconds")
+        print("==================================\n")
+        
+        # Verify order
+        for i in range(num_pages):
+            assert f"Content of Page {i + 1}" in extracted_text, f"FAIL: Page {i + 1} content missing or out of order"
+            
+        print("[OK] Benchmark completed and page order verified!")
+            
+    except Exception as e:
+        print(f"Benchmark Test failed with error: {e}")
+    finally:
+        if os.path.exists(benchmark_pdf_path):
+            os.remove(benchmark_pdf_path)
+            print(f"Cleaned up {benchmark_pdf_path}")
+
+
 if __name__ == "__main__":
     test_parser()
     print("\n" + "="*50 + "\n")
@@ -338,3 +398,5 @@ if __name__ == "__main__":
     test_unbreaking_parser()
     print("\n" + "="*50 + "\n")
     test_formula_parser()
+    print("\n" + "="*50 + "\n")
+    test_concurrent_ocr_benchmark()

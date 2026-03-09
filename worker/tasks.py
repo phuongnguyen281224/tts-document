@@ -121,7 +121,7 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         
         audio_files = []
         for i, chunk_text in enumerate(chunks):
-            chunk_audio_path = os.path.join(OUTPUT_DIR, f"{task_id}_chunk_{i:04d}.wav")
+            chunk_audio_path = os.path.join(OUTPUT_DIR, f"{task_id}_chunk_{i:04d}.mp3")
             print(f"[{task_id}] Đang sinh audio cho chunk {i+1}/{chunk_count}...", flush=True)
             
             try:
@@ -147,9 +147,33 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         print(f"[{task_id}] === BƯỚC 5: Đang nối {len(audio_files)} files âm thanh...", flush=True)
         final_mp3_path = None
         
+        if not audio_files:
+            error_msg = f"[{task_id}] Lỗi: Không có file audio nào được sinh ra."
+            print(error_msg, flush=True)
+            raise ValueError(error_msg)
+
         try:
-            audio_segments = [AudioSegment.from_wav(f) for f in audio_files]
-            combined_audio = concatenate_audio(audio_segments, crossfade_ms=50)
+            audio_segments = []
+            for f in audio_files:
+                try:
+                    seg = AudioSegment.from_file(f)
+                    audio_segments.append(seg)
+                except Exception as ex:
+                    print(f"[{task_id}] Không thể load file mp3 {f}: {ex}", flush=True)
+
+            if not audio_segments:
+                raise ValueError("Không có segment audio hợp lệ để nối.")
+
+            # Filter out segments that are too short for crossfade
+            valid_segments = [seg for seg in audio_segments if len(seg) > 50]
+            
+            if not valid_segments:
+                print(f"[{task_id}] Warning: All segments are shorter than crossfade. Concatenating without crossfade.", flush=True)
+                combined_audio = AudioSegment.empty()
+                for seg in audio_segments:
+                    combined_audio += seg
+            else:
+                combined_audio = concatenate_audio(valid_segments, crossfade_ms=50)
             
             os.makedirs(COMPLETED_DIR, exist_ok=True)
             final_mp3_path = os.path.join(COMPLETED_DIR, f"{task_id}_final.mp3")
@@ -163,7 +187,10 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
                     except: pass
             
         except Exception as e:
-            print(f"[{task_id}] Lỗi trong quá trình nối Audio Processing: {e}", flush=True)
+            error_msg = f"[{task_id}] Lỗi trong quá trình nối Audio Processing: {e}"
+            print(error_msg, flush=True)
+            # Do not set final_mp3_path if it fails
+            raise e
 
         # ------------------------------------------------------------------ #
         # Bước 6 — Lưu kết quả chunk mapping ra disk
@@ -175,10 +202,14 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
             "final_mp3": final_mp3_path
         }
         
-        with open(chunks_file_path, "w", encoding="utf-8") as f:
-            json.dump(output_metadata, f, ensure_ascii=False, indent=2)
+        try:
+            with open(chunks_file_path, "w", encoding="utf-8") as f:
+                json.dump(output_metadata, f, ensure_ascii=False, indent=2)
+            abs_chunks_path = os.path.abspath(chunks_file_path)
+        except Exception as e:
+            print(f"[{task_id}] Lỗi lưu chunks.json: {e}", flush=True)
+            abs_chunks_path = None
 
-        abs_chunks_path = os.path.abspath(chunks_file_path)
         return {
             "status":           "success",
             "task_id":          task_id,
@@ -227,7 +258,7 @@ def process_raw_text_task(self, text: str, prompt_path: str = None):
         
         audio_files = []
         for i, chunk_text in enumerate(chunks):
-            chunk_audio_path = os.path.join(OUTPUT_DIR, f"{task_id}_chunk_{i:04d}.wav")
+            chunk_audio_path = os.path.join(OUTPUT_DIR, f"{task_id}_chunk_{i:04d}.mp3")
             print(f"[{task_id}] Đang sinh audio cho chunk {i+1}/{chunk_count}...", flush=True)
             try:
                 tts.synthesize_chunk(
@@ -253,8 +284,8 @@ def process_raw_text_task(self, text: str, prompt_path: str = None):
         final_mp3_path = None
         
         try:
-            # 1. Load các file wav thành cấu trúc dữ liệu
-            audio_segments = [AudioSegment.from_wav(f) for f in audio_files]
+            # 1. Load các file mp3 thành cấu trúc dữ liệu
+            audio_segments = [AudioSegment.from_file(f) for f in audio_files]
             
             # 2. Xử lý logic ghép nối có crossfade từ module
             combined_audio = concatenate_audio(audio_segments, crossfade_ms=50)
@@ -267,7 +298,7 @@ def process_raw_text_task(self, text: str, prompt_path: str = None):
             combined_audio.export(final_mp3_path, format="mp3")
             print(f"[{task_id}] Hậu kỳ thành công! Đã lưu MP3 tại: {final_mp3_path}")
             
-            # 5. Dọn dẹp chỉ định các file wav phân mảnh thuộc riêng task id này
+            # 5. Dọn dẹp chỉ định các file mp3 phân mảnh thuộc riêng task id này
             for f in audio_files:
                 if os.path.exists(f):
                     try:

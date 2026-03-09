@@ -99,7 +99,7 @@ def chunk_normalized_text(text: str) -> list[dict]:
         # Cấu hình Hybrid Chunking cho TTS:
         # 1. max_sentences = 3: Giới hạn theo câu để giữ trọn vẹn ý nghĩa.
         # 2. max_tokens = 80: ~150-250 ký tự, tương đương 10-15 giây audio.
-        # 3. overlap_percent = 25: Clause-level overlap (lặp lại 25% nội dung để nối mạch ngữ cảnh).
+        # 3. overlap_percent = 0: Tắt overlap để tránh bị lặp lại audio ở bản thành phẩm.
         # Hàm đếm token đơn giản: đếm số từ cách nhau bằng khoảng trắng.
         def simple_word_counter(t: str) -> int:
             return len(t.split())
@@ -109,7 +109,7 @@ def chunk_normalized_text(text: str) -> list[dict]:
             lang='vi',
             max_sentences=3,
             max_tokens=80,
-            overlap_percent=25,
+            overlap_percent=0,
             token_counter=simple_word_counter
         )
         
@@ -180,15 +180,16 @@ def process_text_for_tts(raw_text: str) -> list[str]:
     # Bước 1: Dọn dẹp văn bản thô
     cleaned = clean_raw_text(raw_text)
     
-    # Bước 2: Chuẩn hóa số nguyên, ngày tháng, tiếng nước ngoài -> Chữ Tiếng Việt
-    normalized = normalize_vietnamese_text(cleaned)
-    logger.info(f"Đã chuẩn hóa thành {len(normalized)} ký tự tiếng Việt.")
+    # Bước 2: Phân rã văn bản thông minh (Chunking) khi văn bản còn giữ dấu câu và viết hoa
+    chunks = chunk_normalized_text(cleaned)
+    logger.info(f"Đã phân rã thành {len(chunks)} chunks cơ bản.")
     
-    # Bước 3: Phân rã văn bản thông minh (Hybrid mode với Clause-level overlap)
-    chunks = chunk_normalized_text(normalized)
-    
-    # Bước 4: Trích xuất List[str]
-    final_output = [c["text"] for c in chunks]
+    # Bước 3: Chuẩn hóa từng chunk sau khi đã cắt
+    final_output = []
+    for c in chunks:
+        norm_text = normalize_vietnamese_text(c["text"])
+        if norm_text:
+            final_output.append(norm_text)
     
     logger.info(f"Orchestrator hoàn tất: Tạo ra {len(final_output)} luồng phát âm.")
     return final_output
