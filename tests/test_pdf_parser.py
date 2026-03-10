@@ -388,6 +388,72 @@ def test_concurrent_ocr_benchmark():
             print(f"Cleaned up {benchmark_pdf_path}")
 
 
+def test_toc_references_filtering():
+    print(f"\n--- Running TOC and References Filtering Test ---\n")
+    filter_pdf_path = "filter_test.pdf"
+    
+    try:
+        # Create a 3-page PDF: TOC, Body, References
+        doc = fitz.open()
+        
+        # 1. Page 1: Table of Contents
+        p1 = doc.new_page(width=595, height=842)
+        toc_text = (
+            "MỤC LỤC\n\n"
+            "Chương 1 ...................... 1\n"
+            "Chương 2 ...................... 15\n"
+            "Chương 3 ...................... 30\n"
+            "Chương 4 ...................... 45\n"
+            "Chương 5 ...................... 60\n"
+        )
+        p1.insert_textbox(fitz.Rect(50, 50, 550, 400), toc_text, fontsize=12, align=0)
+        
+        # 2. Page 2: Normal Body Text (must be extracted)
+        p2 = doc.new_page(width=595, height=842)
+        body_text = (
+            "This is the actual core content of the book.\n"
+            "It contains important information that should be read by the TTS model.\n"
+            "Do not skip this page."
+        )
+        p2.insert_textbox(fitz.Rect(50, 50, 550, 400), body_text, fontsize=12, align=0)
+        
+        # 3. Page 3: References
+        p3 = doc.new_page(width=595, height=842)
+        ref_text = (
+            "TÀI LIỆU THAM KHẢO\n\n"
+            "[1] Author A, Book Title, 2020.\n"
+            "[2] Author B, Paper Title, 2021.\n"
+            "[3] Author C, Journal Article, 2022.\n"
+            "[4] Author D, Website Link, 2023.\n"
+        )
+        p3.insert_textbox(fitz.Rect(50, 50, 550, 400), ref_text, fontsize=12, align=0)
+        
+        doc.save(filter_pdf_path)
+        doc.close()
+        
+        extracted_text = extract_text_from_pdf(filter_pdf_path)
+        
+        print("====== FILTERED TEXT RESULT ======")
+        print(extracted_text)
+        print("==================================\n")
+        
+        # Assertions
+        assert "MỤC LỤC" not in extracted_text, "FAIL: TOC page was NOT filtered!"
+        assert "Chương 1" not in extracted_text, "FAIL: TOC content leaked!"
+        assert "This is the actual core content" in extracted_text, "FAIL: Normal body text was incorrectly filtered!"
+        assert "TÀI LIỆU THAM KHẢO" not in extracted_text, "FAIL: References page was NOT filtered!"
+        assert "Author A" not in extracted_text, "FAIL: References content leaked!"
+        
+        print("[OK] TOC and References filtering test passed! Unwanted pages were skipped.")
+        
+    except Exception as e:
+        print(f"Filtering Test failed with error: {e}")
+    finally:
+        if os.path.exists(filter_pdf_path):
+            os.remove(filter_pdf_path)
+            print(f"Cleaned up {filter_pdf_path}")
+
+
 if __name__ == "__main__":
     test_parser()
     print("\n" + "="*50 + "\n")
@@ -400,3 +466,5 @@ if __name__ == "__main__":
     test_formula_parser()
     print("\n" + "="*50 + "\n")
     test_concurrent_ocr_benchmark()
+    print("\n" + "="*50 + "\n")
+    test_toc_references_filtering()

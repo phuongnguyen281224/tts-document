@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # Global instances để chia sẻ trạng thái nếu cần
 _normalizer = None
 _chunker = None
+_custom_replacements = {} # {word: pronunciation}
 
 def _get_normalizer():
     """Khởi tạo và trả về instance của VietnameseNormalizer theo mô hình singleton lỏng."""
@@ -23,15 +24,34 @@ def _get_normalizer():
             from vietnormalizer import VietnameseNormalizer
             
             # Khởi tạo đường dẫn tuyệt đối cho các từ điển tùy chỉnh
-            base_dir = os.path.dirname(os.path.dirname(__file__))
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             acronyms_csv = os.path.join(base_dir, "dictionaries", "custom_acronyms.csv")
             loanwords_csv = os.path.join(base_dir, "dictionaries", "custom_loanwords.csv")
+            
+            logger.info(f"Đang kiểm tra từ điển: {acronyms_csv} (Exists: {os.path.exists(acronyms_csv)})")
+            logger.info(f"Đang kiểm tra từ điển: {loanwords_csv} (Exists: {os.path.exists(loanwords_csv)})")
             
             _normalizer = VietnameseNormalizer(
                 acronyms_path=acronyms_csv if os.path.exists(acronyms_csv) else None,
                 non_vietnamese_words_path=loanwords_csv if os.path.exists(loanwords_csv) else None
             )
-            logger.info("Đã khởi tạo VietnameseNormalizer với Custom Dictionaries.")
+            
+            # Manual backup: Load CSV into memory for forced replacement
+            import csv
+            for path in [acronyms_csv, loanwords_csv]:
+                if os.path.exists(path):
+                    try:
+                        with open(path, mode='r', encoding='utf-8-sig') as f:
+                            reader = csv.DictReader(f)
+                            for row in reader:
+                                word = row.get('word', '').strip()
+                                pron = row.get('vietnamese_pronunciation', '').strip()
+                                if word and pron:
+                                    _custom_replacements[word] = pron
+                    except Exception as e:
+                        logger.error(f"Lỗi khi đọc CSV {path}: {e}")
+            
+            logger.info(f"Đã khởi tạo VietnameseNormalizer. Manual replacements loaded: {len(_custom_replacements)}")
         except ImportError as e:
             logger.error("Thư viện 'vietnormalizer' chưa được cài đặt. Chạy `pip install vietnormalizer`.")
             raise e
@@ -57,13 +77,20 @@ def normalize_vietnamese_text(text: str) -> str:
     text = text.replace("  ", " ").replace(" phút phút", " phút") # Dọn dẹp spacing
     
     try:
+        # 1. Manual Replacement (Pre-normalization)
+        # Sort keys by length descending to avoid partial matches (e.g., "MLOps" before "ML")
+        sorted_keys = sorted(_custom_replacements.keys(), key=len, reverse=True)
+        for word in sorted_keys:
+            # Case-insensitive replacement with word boundaries to avoid partial matches (e.g. AI in online)
+            # Use raw string for pattern to handle \b correctly
+            pattern = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+            text = pattern.sub(_custom_replacements[word], text)
+
         norm = _get_normalizer()
-        # vietnormalizer có hàm normalize để xử lý toàn bộ
         normalized = norm.normalize(text)
         return normalized
     except Exception as e:
         logger.error(f"Lỗi khi chuẩn hóa văn bản bằng vietnormalizer: {e}")
-        # Log lỗi nhưng vẫn trả về text gốc/đã làm sạch nếu có lỗi nội bộ
         return text
 
 def _get_chunker():

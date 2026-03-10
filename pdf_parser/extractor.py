@@ -131,6 +131,53 @@ def _ocr_page(pdf_path: str, page_num: int) -> str:
         print(f"  [OCR] Unexpected error on page {page_num + 1}: {e}")
         return ""
 
+def is_toc_or_references_page(page_text: str, first_blocks: list, page_num: int, total_pages: int) -> bool:
+    """
+    Heuristic to determine if a page is a Table of Contents (Mục lục) 
+    or References (Tài liệu tham khảo).
+    """
+    if not page_text or not first_blocks:
+        return False
+        
+    # Check TOC on early pages (first 20 pages or first 20% of the book)
+    if page_num < max(20, total_pages * 0.2):
+        toc_keywords = ["mục lục", "table of contents", "nội dung"]
+        toc_found = False
+        for block in first_blocks[:5]:
+            block_lower = block.lower()
+            if any(kw in block_lower for kw in toc_keywords):
+                toc_found = True
+                break
+                
+        if toc_found:
+            # Verify with dotted patterns '.....' or many lines ending with numbers
+            lines = page_text.split('\n')
+            dotted_lines_count = sum(1 for line in lines if re.search(r'\.{4,}', line))
+            number_ending_count = sum(1 for line in lines if re.search(r'\d+\s*$', line.strip()))
+            
+            if dotted_lines_count >= 3 or number_ending_count >= 5:
+                return True
+
+    # Check References on late pages (last 20 pages or last 20% of the book)
+    if page_num > total_pages - max(20, total_pages * 0.2):
+        ref_keywords = ["tài liệu tham khảo", "references", "bibliography"]
+        ref_found = False
+        for block in first_blocks[:5]:
+            block_lower = block.lower()
+            if any(kw in block_lower for kw in ref_keywords):
+                ref_found = True
+                break
+                
+        if ref_found:
+            # Check for list patterns like "[1]", "1.", "1)" at start of lines
+            lines = page_text.split('\n')
+            list_item_count = sum(1 for line in lines if re.match(r'^\s*(\[\d+\]|\d+[\.\)])', line))
+            
+            if list_item_count >= 3:
+                return True
+                
+    return False
+
 def extract_text_from_pdf(pdf_path: str) -> str:
     """
     Extracts text from a given PDF path.
@@ -235,6 +282,11 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         page_body = "\n\n".join(page_text)
         
+        # Check TOC or References Heuristic before proceeding
+        if is_toc_or_references_page(page_body, page_text, page_num, total_pages):
+            print(f"  [SKIP] Page {page_num + 1}: Detected Table of Contents or References.")
+            continue
+            
         # OCR fallback: if the extracted text is suspiciously short, try OCR
         if len(page_body.strip()) < OCR_CHAR_THRESHOLD:
             print(f"  [OCR] Page {page_num + 1}: low text ({len(page_body.strip())} chars), scheduling OCR...")
