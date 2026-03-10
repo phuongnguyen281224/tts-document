@@ -1,10 +1,28 @@
 word,vietnamese_pronunciation
-UBND,ủy ban nhân dân
 HĐND,hội đồng nhân dân
+UBND,ủy ban nhân dân
 BHXH,bảo hiểm xã hội
 BHYT,bảo hiểm y tế
 CSGT,cảnh sát giao thông
-GDDT,giáo dục đào tạo
+GDĐT,giáo dục đào tạo
 TNHH,trách nhiệm hữu hạn
 VNĐ,đồng
 USD,đô la Mỹ
+MLOps,vận hành học máy
+DevOps,vận hành phát triển phần mềm
+DataOps,vận hành dữ liệu
+AI,trí tuệ nhân tạo
+ML,học máy
+GenAI,trí tuệ nhân tạo tạo sinh
+LLM,mô hình ngôn ngữ lớn
+LLMs,các mô hình ngôn ngữ lớn
+CI,tích hợp liên tục
+CD,triển khai liên tục
+CI/CD,tích hợp và triển khai liên tục
+IT,công nghệ thông tin
+UI,giao diện người dùng
+API,giao diện lập trình ứng dụng
+REST API,giao diện lập trình ứng dụng
+SLA,cam kết mức dịch vụ
+MTTR,thời gian trung bình để khôi phục
+DORA,nhóm nghiên cứu hiệu suất phần mềm

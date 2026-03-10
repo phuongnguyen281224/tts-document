@@ -10,6 +10,13 @@ Không cần Celery hay Redis. Test trực tiếp 3 hàm trong worker/nlp_proces
 import sys
 import os
 
+# Configure stdout to handle Vietnamese characters properly on Windows
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 # Đảm bảo import được từ thư mục gốc dự án
 sys.path.insert(0, os.path.dirname(__file__))
 

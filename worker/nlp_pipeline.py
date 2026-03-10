@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # Global instances để chia sẻ trạng thái nếu cần
 _normalizer = None
 _chunker = None
+_custom_replacements = {} # {word: pronunciation}
 
 def _get_normalizer():
     """Khởi tạo và trả về instance của VietnameseNormalizer theo mô hình singleton lỏng."""
@@ -23,15 +24,34 @@ def _get_normalizer():
             from vietnormalizer import VietnameseNormalizer
             
             # Khởi tạo đường dẫn tuyệt đối cho các từ điển tùy chỉnh
-            base_dir = os.path.dirname(os.path.dirname(__file__))
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             acronyms_csv = os.path.join(base_dir, "dictionaries", "custom_acronyms.csv")
             loanwords_csv = os.path.join(base_dir, "dictionaries", "custom_loanwords.csv")
+            
+            logger.info(f"Đang kiểm tra từ điển: {acronyms_csv} (Exists: {os.path.exists(acronyms_csv)})")
+            logger.info(f"Đang kiểm tra từ điển: {loanwords_csv} (Exists: {os.path.exists(loanwords_csv)})")
             
             _normalizer = VietnameseNormalizer(
                 acronyms_path=acronyms_csv if os.path.exists(acronyms_csv) else None,
                 non_vietnamese_words_path=loanwords_csv if os.path.exists(loanwords_csv) else None
             )
-            logger.info("Đã khởi tạo VietnameseNormalizer với Custom Dictionaries.")
+            
+            # Manual backup: Load CSV into memory for forced replacement
+            import csv
+            for path in [acronyms_csv, loanwords_csv]:
+                if os.path.exists(path):
+                    try:
+                        with open(path, mode='r', encoding='utf-8-sig') as f:
+                            reader = csv.DictReader(f)
+                            for row in reader:
+                                word = row.get('word', '').strip()
+                                pron = row.get('vietnamese_pronunciation', '').strip()
+                                if word and pron:
+                                    _custom_replacements[word] = pron
+                    except Exception as e:
+                        logger.error(f"Lỗi khi đọc CSV {path}: {e}")
+            
+            logger.info(f"Đã khởi tạo VietnameseNormalizer. Manual replacements loaded: {len(_custom_replacements)}")
         except ImportError as e:
             logger.error("Thư viện 'vietnormalizer' chưa được cài đặt. Chạy `pip install vietnormalizer`.")
             raise e
@@ -57,13 +77,20 @@ def normalize_vietnamese_text(text: str) -> str:
     text = text.replace("  ", " ").replace(" phút phút", " phút") # Dọn dẹp spacing
     
     try:
+        # 1. Manual Replacement (Pre-normalization)
+        # Sort keys by length descending to avoid partial matches (e.g., "MLOps" before "ML")
+        sorted_keys = sorted(_custom_replacements.keys(), key=len, reverse=True)
+        for word in sorted_keys:
+            # Case-insensitive replacement with word boundaries to avoid partial matches (e.g. AI in online)
+            # Use raw string for pattern to handle \b correctly
+            pattern = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+            text = pattern.sub(_custom_replacements[word], text)
+
         norm = _get_normalizer()
-        # vietnormalizer có hàm normalize để xử lý toàn bộ
         normalized = norm.normalize(text)
         return normalized
     except Exception as e:
         logger.error(f"Lỗi khi chuẩn hóa văn bản bằng vietnormalizer: {e}")
-        # Log lỗi nhưng vẫn trả về text gốc/đã làm sạch nếu có lỗi nội bộ
         return text
 
 def _get_chunker():
@@ -99,7 +126,7 @@ def chunk_normalized_text(text: str) -> list[dict]:
         # Cấu hình Hybrid Chunking cho TTS:
         # 1. max_sentences = 3: Giới hạn theo câu để giữ trọn vẹn ý nghĩa.
         # 2. max_tokens = 80: ~150-250 ký tự, tương đương 10-15 giây audio.
-        # 3. overlap_percent = 25: Clause-level overlap (lặp lại 25% nội dung để nối mạch ngữ cảnh).
+        # 3. overlap_percent = 0: Tắt overlap để tránh bị lặp lại audio ở bản thành phẩm.
         # Hàm đếm token đơn giản: đếm số từ cách nhau bằng khoảng trắng.
         def simple_word_counter(t: str) -> int:
             return len(t.split())
@@ -109,7 +136,7 @@ def chunk_normalized_text(text: str) -> list[dict]:
             lang='vi',
             max_sentences=3,
             max_tokens=80,
-            overlap_percent=25,
+            overlap_percent=0,
             token_counter=simple_word_counter
         )
         
@@ -180,15 +207,16 @@ def process_text_for_tts(raw_text: str) -> list[str]:
     # Bước 1: Dọn dẹp văn bản thô
     cleaned = clean_raw_text(raw_text)
     
-    # Bước 2: Chuẩn hóa số nguyên, ngày tháng, tiếng nước ngoài -> Chữ Tiếng Việt
-    normalized = normalize_vietnamese_text(cleaned)
-    logger.info(f"Đã chuẩn hóa thành {len(normalized)} ký tự tiếng Việt.")
+    # Bước 2: Phân rã văn bản thông minh (Chunking) khi văn bản còn giữ dấu câu và viết hoa
+    chunks = chunk_normalized_text(cleaned)
+    logger.info(f"Đã phân rã thành {len(chunks)} chunks cơ bản.")
     
-    # Bước 3: Phân rã văn bản thông minh (Hybrid mode với Clause-level overlap)
-    chunks = chunk_normalized_text(normalized)
-    
-    # Bước 4: Trích xuất List[str]
-    final_output = [c["text"] for c in chunks]
+    # Bước 3: Chuẩn hóa từng chunk sau khi đã cắt
+    final_output = []
+    for c in chunks:
+        norm_text = normalize_vietnamese_text(c["text"])
+        if norm_text:
+            final_output.append(norm_text)
     
     logger.info(f"Orchestrator hoàn tất: Tạo ra {len(final_output)} luồng phát âm.")
     return final_output

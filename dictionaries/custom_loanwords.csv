@@ -5,8 +5,168 @@ web,oép
 marketing,ma két tinh
 sale,xêu
 livestream,lai trim
-online,o n lai
-offline,ợp lai
+online,on lai
+offline,ọp lai
 internet,in tơ nét
 ai,ây ai
 ml,em eo
+mlops,em eo ốp
+mlflow,em eo phờ lâu
+devops,đép ốp
+dataops,đa ta ốp
+genai,gen ây ai
+llm,eo eo em
+api,ây pi ai
+apis,ây pi ai
+ui,iu ai
+rest,rét
+python,pai thơn
+java,gia va
+c++,xi cọng cọng
+jupyter,giu pi tơ
+notebook,nốt búc
+machine,ma chin
+learning,lơn ninh
+operations,ốp pơ rây sần
+data,đa ta
+science,sai ần
+engineering,en gi nia ring
+carbonara,các bo na ra
+consistency,con sít tơn si
+recipe,rê xi pi
+development,đê vên lốp mần
+taste,tết
+testing,tét tinh
+model,mô đồ
+models,mô đồ
+validation,va li đê sần
+standardizing,xờ tan đa đai dình
+deployment,đíp lòi mần
+continuous,con ti niu ớt
+improvement,im pru vơ mần
+iteration,i tơ rây sần
+pipeline,pai lai
+pipelines,pai lai
+training,trên ninh
+concept,con sép
+drift,đờ ríp
+loss,lót
+traceability,trây sơ bi li ti
+silo,sai lô
+environment,en vai rân mần
+environments,en vai rân mần
+serving,sơ vinh
+feature,phi chờ
+inconsistency,in con sít tơn si
+store,sờ to
+stores,sờ to
+loosely,lút li
+coupled,cắp pồ
+architecture,a ki tếc chờ
+template,tem pờ lết
+templates,tem pờ lết
+frequency,phri quân si
+decay,đi cây
+metric,mê trích
+metrics,mê trích
+lead,lít
+time,tham
+change,chen
+changes,chen
+mean,min
+restore,rì sờ to
+fail,phêu
+percentage,pơ sen tịt
+rollback,rôn bách
+single,sing gồ
+source,sót
+truth,trút
+component,com pô nần
+components,com pô nần
+tracking,trác kinh
+run,rân
+runs,rân
+metadata,mê ta đa ta
+parameter,pa ra mét tơ
+parameters,pa ra mét tơ
+artifact,a ti phách
+artifacts,a ti phách
+experiment,ếch pe ri mần
+experiments,ếch pe ri mần
+hyperparameter,hai pơ pa ra mét tơ
+tuning,tun ninh
+reproducibility,ri prô đu si bi li ti
+project,rồ dếch
+projects,rồ dếch
+mlproject,em eo rồ dếch
+conda,con đa
+docker,đóc cơ
+scikit-learn,sai kít lơn
+pytorch,pai tót
+tensorflow,ten sơ phờ lâu
+system,sít tầm
+systems,sít tầm
+plating,pờ lết tinh
+apache,a pa chê
+spark,sờ pác
+registry,rê gít tri
+lineage,li ni ệt
+tag,tát
+tags,tát
+alias,a li át
+aliases,a li át
+champion,cham pi ần
+staging,sờ tây dình
+production,prô đắc sần
+master,mát tơ
+menu,me niu
+generative,gen nơ rây típ
+tracing,trây sinh
+observability,ốp dơ va bi li ti
+opentelemetry,ô pần te le me tri
+debugging,đi bức ging
+evaluation,e va lu ây sần
+framework,phrem uốc
+frameworks,phrem uốc
+judge,dớt
+judges,dớt
+prompt,rôm
+prompts,rôm
+management,ma nát giơ mần
+gateway,gết uây
+openai,ô pần ây ai
+anthropic,an thrô pích
+fallback,phôn bách
+fallbacks,phôn bách
+agent,ây dừn
+agents,ây dừn
+server,sơ vơ
+fastapi,phát ây pi ai
+streaming,sờ trim minh
+endpoint,en poi
+lifecycle,lai sai cồ
+experimentation,ếch pe ri men tây sần
+scale,sờ kêu
+wall,uôn
+enterprise,en tơ prai
+tribal,trai bồ
+knowledge,no lịt
+isolation,ai sô lây sần
+granular,gra nu lờ
+permission,pơ mít sần
+permissions,pơ mít sần
+wrapper,rắp pơ
+wrappers,rắp pơ
+audit,o đít
+trail,trêu
+trails,trêu
+chaos,kây ốt
+accuracy,a cu ra si
+acc,ác
+availability,a vây la bi li ti
+democratization,đê mô cra ti dây sần
+innovation,in nô vây sần
+file,phai
+format,phò mát
+module,mô đun
+logic,lô gích

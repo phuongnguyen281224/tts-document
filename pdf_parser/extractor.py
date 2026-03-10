@@ -1,6 +1,7 @@
 import os
 import re
 import fitz
+import concurrent.futures
 try:
     import pytesseract
     from pdf2image import convert_from_path
@@ -45,6 +46,11 @@ def clean_extracted_text(raw_text: str) -> str:
     # (e.g., '---------', '...', '   '). Preserve lines with at least one word char.
     text = re.sub(r'^[\s\W]+$', '', text, flags=re.MULTILINE)
     
+    # Step 4.5: Smart Un-breaking
+    # Join lines that don't end with a punctuation mark, a hyphen, or another newline.
+    # We replace single newlines that split a sentence with a space.
+    text = re.sub(r'(?<![\.\?\!\,\:\;\-\n])\n(?!\n)', ' ', text)
+    
     # Step 5: Collapse 3 or more consecutive blank lines into at most 2.
     text = re.sub(r'\n{3,}', '\n\n', text)
     
@@ -69,6 +75,27 @@ def is_page_number(text: str) -> bool:
         if re.match(p, text_lower):
             return True
     return False
+
+
+def is_code_or_formula(text: str, threshold: float = 0.15) -> bool:
+    """
+    Checks if a text block has a high density of special characters,
+    indicating it's likely a code snippet or mathematical formula.
+    """
+    if not text:
+        return False
+        
+    special_chars = set("{}[]\\_^<>=/+*|@#")
+    special_count = sum(1 for char in text if char in special_chars)
+    
+    # Calculate density based on non-whitespace characters to be more accurate
+    non_ws_count = len("".join(text.split()))
+    
+    if non_ws_count == 0:
+        return False
+        
+    return (special_count / non_ws_count) > threshold
+
 
 def _ocr_page(pdf_path: str, page_num: int) -> str:
     """
@@ -104,6 +131,53 @@ def _ocr_page(pdf_path: str, page_num: int) -> str:
         print(f"  [OCR] Unexpected error on page {page_num + 1}: {e}")
         return ""
 
+def is_toc_or_references_page(page_text: str, first_blocks: list, page_num: int, total_pages: int) -> bool:
+    """
+    Heuristic to determine if a page is a Table of Contents (Mục lục) 
+    or References (Tài liệu tham khảo).
+    """
+    if not page_text or not first_blocks:
+        return False
+        
+    # Check TOC on early pages (first 20 pages or first 20% of the book)
+    if page_num < max(20, total_pages * 0.2):
+        toc_keywords = ["mục lục", "table of contents", "nội dung"]
+        toc_found = False
+        for block in first_blocks[:5]:
+            block_lower = block.lower()
+            if any(kw in block_lower for kw in toc_keywords):
+                toc_found = True
+                break
+                
+        if toc_found:
+            # Verify with dotted patterns '.....' or many lines ending with numbers
+            lines = page_text.split('\n')
+            dotted_lines_count = sum(1 for line in lines if re.search(r'\.{4,}', line))
+            number_ending_count = sum(1 for line in lines if re.search(r'\d+\s*$', line.strip()))
+            
+            if dotted_lines_count >= 3 or number_ending_count >= 5:
+                return True
+
+    # Check References on late pages (last 20 pages or last 20% of the book)
+    if page_num > total_pages - max(20, total_pages * 0.2):
+        ref_keywords = ["tài liệu tham khảo", "references", "bibliography"]
+        ref_found = False
+        for block in first_blocks[:5]:
+            block_lower = block.lower()
+            if any(kw in block_lower for kw in ref_keywords):
+                ref_found = True
+                break
+                
+        if ref_found:
+            # Check for list patterns like "[1]", "1.", "1)" at start of lines
+            lines = page_text.split('\n')
+            list_item_count = sum(1 for line in lines if re.match(r'^\s*(\[\d+\]|\d+[\.\)])', line))
+            
+            if list_item_count >= 3:
+                return True
+                
+    return False
+
 def extract_text_from_pdf(pdf_path: str) -> str:
     """
     Extracts text from a given PDF path.
@@ -119,7 +193,9 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         raise FileNotFoundError(f"PDF file not found at: {pdf_path}")
 
     doc = fitz.open(pdf_path)
-    extracted_text_pieces = []
+    total_pages = len(doc)
+    extracted_page_texts = [""] * total_pages
+    pages_to_ocr = []
     
     # Store blocks by page for the two-pass filtering
     pages_blocks = []
@@ -133,13 +209,35 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         blocks = page.get_text("blocks")
         page_height = page.rect.height
         
-        # We only care about text blocks (block_type == 0)
+        # Detect tables to exclude text inside them.
+        tables = page.find_tables()
+        table_bboxes = []
+        if tables.tables:
+            for table in tables.tables:
+                table_bboxes.append(fitz.Rect(table.bbox))
+        
+        # We only care about text blocks (block_type == 0). Image blocks (type == 1) are skipped.
         text_blocks = [b for b in blocks if b[6] == 0]
         
         filtered_blocks = []
         for block in text_blocks:
+            # Check if this text block overlaps with any table
+            block_rect = fitz.Rect(block[:4])
+            overlaps_table = False
+            for t_bbox in table_bboxes:
+                if block_rect.intersects(t_bbox):
+                    overlaps_table = True
+                    break
+            
+            if overlaps_table:
+                continue
+
             text_content = block[4].strip()
             if text_content:
+                # Check for high-density special characters (code/math blocks)
+                if is_code_or_formula(text_content):
+                    text_content = "[Nội dung chứa công thức hoặc đoạn mã đã được hệ thống tự động bỏ qua]"
+                    
                 y0, y1 = block[1], block[3]
                 
                 # Check if it's in the header or footer zone (72 points = 1 inch)
@@ -184,21 +282,38 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         page_body = "\n\n".join(page_text)
         
+        # Check TOC or References Heuristic before proceeding
+        if is_toc_or_references_page(page_body, page_text, page_num, total_pages):
+            print(f"  [SKIP] Page {page_num + 1}: Detected Table of Contents or References.")
+            continue
+            
         # OCR fallback: if the extracted text is suspiciously short, try OCR
         if len(page_body.strip()) < OCR_CHAR_THRESHOLD:
-            print(f"  [OCR] Page {page_num + 1}: low text ({len(page_body.strip())} chars), activating OCR...")
-            ocr_text = _ocr_page(pdf_path, page_num)
-            if ocr_text:
-                extracted_text_pieces.append(f"--- Page {page_num + 1} [OCR] ---")
-                extracted_text_pieces.append(ocr_text)
+            print(f"  [OCR] Page {page_num + 1}: low text ({len(page_body.strip())} chars), scheduling OCR...")
+            pages_to_ocr.append(page_num)
         elif page_text:
-            extracted_text_pieces.append(f"--- Page {page_num + 1} ---")
-            extracted_text_pieces.append(page_body)
+            extracted_page_texts[page_num] = f"--- Page {page_num + 1} ---\n\n{page_body}"
+
+    # Perform Concurrent OCR
+    if pages_to_ocr:
+        max_workers = os.cpu_count() or 4
+        print(f"  [OCR] Starting concurrent OCR for {len(pages_to_ocr)} pages using {max_workers} workers...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {executor.submit(_ocr_page, pdf_path, p): p for p in pages_to_ocr}
+            for future in concurrent.futures.as_completed(future_to_page):
+                page_num = future_to_page[future]
+                try:
+                    ocr_text = future.result()
+                    if ocr_text:
+                        extracted_page_texts[page_num] = f"--- Page {page_num + 1} [OCR] ---\n\n{ocr_text}"
+                except Exception as exc:
+                    print(f"  [OCR] Page {page_num + 1} generated an exception: {exc}")
             
     doc.close()
     
-    # Concatenate all page contents, separating pages by double newlines
-    final_result = "\n\n".join(extracted_text_pieces)
+    # Concatenate all non-empty page contents, separating pages by double newlines
+    final_result = "\n\n".join(filter(None, extracted_page_texts))
     
     # Final cleanup pass: remove garbage characters and normalize whitespace
     return clean_extracted_text(final_result)
