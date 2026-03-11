@@ -1,97 +1,172 @@
-# Phân Tích Kiến Trúc Backend: Hệ Thống Text-to-Speech Phân Tán (Asynchronous TTS System)
+# Vietnamese PDF-to-Audio Distributed Pipeline
 
-Tài liệu này đóng vai trò là kim chỉ nam kỹ thuật cho Giai đoạn 1 của dự án. Hệ thống được thiết kế theo hướng Microservices siêu nhỏ, tách biệt hoàn toàn API giao tiếp (FastAPI) khỏi luồng tính toán AI nặng nề (Celery + Redis). Thiết kế này đảm bảo ứng dụng không bao giờ bị "treo" khi có nhiều người dùng sử dụng cùng lúc.
+A robust, enterprise-grade distributed system for converting Vietnamese PDF documents into high-quality audio (MP3/WAV). Built with a microservices architecture to ensure scalability, reliability, and low latency.
 
 ---
 
-## 1. Cấu Trúc Thư Mục (Directory Structure)
+## 🚀 Key Features
+
+-   **Advanced Vietnamese NLP**:
+    -   Intelligent text normalization and chunking.
+    -   Customizable **acronym expansion** (e.g., "HĐND" → "hội đồng nhân dân").
+    -   Handling of **loanwords** and specialized terminology.
+-   **Robust Document Parsing**:
+    -   Seamless extraction from text-based PDFs.
+    -   **Concurrent OCR fallback** using Tesseract for scanned documents, optimized for multi-core CPUs.
+-   **Distributed Architecture**:
+    -   **FastAPI** for high-performance API communication.
+    -   **Celery + Redis** for asynchronous task execution.
+    -   SQLite with SQLAlchemy for persistent job tracking.
+-   **Interfaces**:
+    -   **CLI Tool**: Complete end-to-end pipeline in a single command.
+    -   **REST API**: Fully documented with Swagger UI.
+-   **Observability**:
+    -   **OpenTelemetry** for end-to-end distributed tracing.
+    -   **Flower** for real-time monitoring of Celery workers.
+
+---
+
+## 🏗️ Architecture
+
+The system decouples the heavy AI computation from the user interface using a task queue pattern.
+
+```mermaid
+graph TD
+    User([User])
+    CLI[tts_cli.py]
+    FastAPI[FastAPI Server]
+    DB[(SQLite)]
+    Redis{Redis Queue}
+    Worker[Celery Worker]
+    PDF[PDF Extractor + OCR]
+    NLP[NLP Pipeline]
+    TTS[TTS Engine]
+    Audio[Audio Processor]
+    Output[/MP3 Output/]
+
+    User --> CLI
+    CLI --> FastAPI
+    User -- API --> FastAPI
+    FastAPI --> DB
+    FastAPI -- Enqueue Task --> Redis
+    Redis -- Fetch Task --> Worker
+    Worker --> PDF
+    Worker --> NLP
+    Worker --> TTS
+    Worker --> Audio
+    Audio --> Output
+    Worker -- Update Status --> DB
+    FastAPI -- Poll Status --> DB
+```
+
+---
+
+## 📂 Directory Structure
 
 ```text
 📦 tts-document
- ┣ 📂 app                  # Tầng Web API (FastAPI)
- ┃ ┣ 📜 main.py           # Entrypoint của toàn bộ API server, định nghĩa các routers
- ┃ ┣ 📜 database.py       # Cấu hình kết nối SQLAlchemy (SQLite)
- ┃ ┣ 📜 models.py         # Định nghĩa các ORM Models (VD: AudioJob)
- ┃ ┣ 📜 telemetry.py      # Cấu hình OpenTelemetry cho Distributed Tracing
- ┃ ┗ 📂 routers           # Chứa các API con (VD: health.py kiểm tra liveness/readiness)
- ┣ 📂 worker              # Tầng Xử Lý Nền (Celery)
- ┃ ┣ 📜 celery_app.py     # Khởi tạo Celery App & cấu hình Broker/Result Backend
- ┃ ┣ 📜 tasks.py          # Entrypoint của Worker, chứa @celery_app.task (VD: process_pdf_task)
- ┃ ┣ 📜 audio_processor.py# Chắp vá, crossfade và xuất file Audio MP3
- ┃ ┗ 📜 nlp_pipeline.py   # Xử lý ngôn ngữ tự nhiên (NLP), chuẩn hóa văn bản
- ┣ 📂 tts_engine          # Module AI Dịch Thuật & Sinh Âm Thanh (Core Engine)
- ┃ ┗ 📜 generator.py      # Chứa class VietnameseTTS để gọi mô hình Text-to-Speech
- ┣ 📂 pdf_parser          # Module Tiền Xử Lý Document
- ┃ ┣ 📜 extractor.py      # Trích xuất và dọn dẹp (clean) văn bản thô từ file PDF
- ┣ 📂 temp_uploads        # Thư mục tạm lưu PDF được push lên (Tự động xóa sau khi xử lý)
- ┣ 📂 temp_outputs        # Thư mục lưu Chunk JSON trung gian
- ┣ 📂 completed_audios    # Nơi lưu kết quả MP3/WAV cuối cùng để trả về cho người dùng
- ┣ 📜 docker-compose.yml  # File điều phối Container cho Redis & Flower
- ┗ 📜 tts_jobs.db         # Cơ sở dữ liệu SQLite theo dõi lộ trình và siêu dữ liệu của Task
+ ┣ 📂 app                  # Web API Layer (FastAPI)
+ ┃ ┣ 📜 main.py           # API Entrypoint & Routes
+ ┃ ┣ 📜 database.py       # SQLAlchemy Configuration
+ ┃ ┗ 📜 models.py         # Job tracking schema
+ ┣ 📂 worker              # Background Processing Layer (Celery)
+ ┃ ┣ 📜 tasks.py          # PDF Processing Orchestrator
+ ┃ ┣ 📜 audio_processor.py# Audio merging & Crossfading
+ ┃ ┗ 📜 nlp_pipeline.py   # Text Normalization & Chunking
+ ┣ 📂 tts_engine          # Core AI Engine
+ ┃ ┗ 📜 generator.py      # Vietnamese TTS Model Interface
+ ┣ 📂 pdf_parser          # Document Extraction
+ ┃ ┗ 📜 extractor.py      # Text Extraction & Concurrent OCR
+ ┣ 📂 dictionaries        # NLP Customization
+ ┃ ┣ 📜 custom_acronyms.csv
+ ┃ ┗ 📜 custom_loadwords.csv
+ ┣ 📜 tts_cli.py          # Unified Command Line Tool
+ ┣ 📜 docker-compose.yml  # Redis & Flower Infrastructure
+ ┗ 📜 requirements.txt    # Project Dependencies
 ```
 
 ---
 
-## 2. Luồng Dữ Liệu Chốt Chặn (Data Flow)
+## 🛠️ Getting Started
 
-Luồng đi của một Audio Job từ lúc khởi tạo đến lúc hoàn thiện diễn ra theo 6 bước:
+### Prerequisites
 
-1. **Upload File**: Người dùng gửi request `POST /upload-pdf/` đính kèm file.
-2. **Metadata DB (SQLite)**: FastAPI ngay lập tức lưu một bản ghi vào `tts_jobs.db` với trạng thái `PENDING` và lấy ra `task_id` (UUID).
-3. **Enqueue (Redis)**: FastAPI lưu file PDF vào `temp_uploads`, gọi lệnh `apply_async` để đẩy thông điệp công việc (gồm đường dẫn file và `task_id`) vào hàng đợi Redis Queue. Ngay lập tức API trả về HTTP 200 cho người dùng mà không cần chờ AI chạy xong.
-4. **Processing (Celery Worker)**: Worker nhặt task từ Redis, tiến hành chuỗi hành động:
-    - **PDF Parser**: Đọc và làm sạch text.
-    - **NLP Pipeline**: Chuẩn hóa text tiếng Việt và cắt thành các Chunk ngữ nghĩa nhỏ.
-    - **TTS Engine**: Render từng Chunk thành Audio (WAV) và lưu tạm.
-    - **Audio Processor**: Ghép các audio lại bằng Crossfade và nén thành MP3.
-5. **Database Sync**: Thông qua hook `after_return`, worker kết nối lại vào SQLite để cập nhật trạng thái `SUCCESS` (hoặc `FAILURE`) và neo nhãn thời gian `finished_at`.
-6. **Garbage Collection (Dọn dẹp)**: Hook `after_return` tiếp tục kiểm tra và ra lệnh `os.remove()` thủ tiêu file PDF gốc trong `temp_uploads` để chống rác ổ cứng.
+-   **Python 3.10+**
+-   **Tesseract OCR**: Installed on your system and added to PATH.
+-   **Docker Desktop**: For Redis and Flower.
+-   **FFmpeg**: Required by `pydub` for audio processing.
 
----
+### Installation
 
-## 3. Các Quy Ước Bảo Mật & An Toàn Vận Hành
+1.  **Clone the repository**:
+    ```bash
+    git clone <repository-url>
+    cd tts-document
+    ```
 
-- **Màng Lọc Dữ Liệu**: API upload luôn kiểm tra khắt khe `content_type == "application/pdf"` và sử dụng kích thước trần `50MB` mặc định để chống tấn công DDoS phình to đĩa.
-- **Cách Ly Tên Tệp (Sanitization)**: Không bao giờ lưu tên file gốc của người dùng. Mọi file được lưu tại backend đều bị ép đổi tên theo chuỗi `UUID` vô danh để tránh Path Traversal và ghi đè trái phép.
-- **Giới Hạn Nút Thắt (Prefetch Limit)**: Celery worker được cấu hình `worker_prefetch_multiplier = 1` và `task_acks_late = True`. Điều này cấm Worker đầu cơ tích trữ task vào RAM, giúp tiết kiệm bộ nhớ và chống tình trạng OOM (Out Of Memory) Crash.
-- **Thu Hồi Quyền Lực (Aggressive Cancellation)**: Endpoint `DELETE /tasks/{task_id}` cho phép triệu hồi cờ `SIGTERM` đâm thẳng vào OS để ép buộc hủy diệt process của Worker nếu task đó bị kẹt vòng lặp hoặc chạy quá thời gian (chuyển state sang `REVOKED`).
-- **Distributed Tracing (OpenTelemetry)**: Luồng tín hiệu được đồng bộ hóa `Trace ID` từ FastAPI xuyên qua Redis tới tận Celery nhờ OpenTelemetry, giúp dễ dàng rà soát log đa luồng.
+2.  **Set up Virtual Environment**:
+    ```bash
+    python -m venv venv
+    .\venv\Scripts\activate  # Windows
+    pip install -r requirements.txt
+    ```
 
----
-
-## 4. Dependencies & Broker Configuration
-
-- **Message Broker & Result Backend**: Sử dụng `Redis` (Image Docker: `redis:alpine`) làm trạm trung chuyển trung tâm, chạy ở port `6379`.
-- **Worker Monitor**: Sử dụng `Flower` (Image: `mher/flower`) đọc trực tiếp Redis để vẽ biểu đồ giám sát luồng Celery, phơi bày WebUI ở port `5555`.
-- **Database**: Sử dụng `SQLite` thông qua bộ ORM `SQLAlchemy` để lưu trữ dữ liệu task vượt quá vòng đời tắt mở máy.
-- **Core Library & ML**:
-  - `FastAPI`, `Uvicorn`: Khung sườn Web API bất đồng bộ.
-  - `Celery`, `Redis`: Chịu trách nhiệm xử lý nền.
-  - `PyMuPDF` (fitz), `tesseract`: Trích xuất và OCR văn bản.
-  - `PyTorch`, `Transformers`, `Huggingface Hub`: Thư viện lõi cho AI.
-  - `Pydub`: Cố định và hợp nhất Audio Format.
+3.  **Start Infrastructure**:
+    ```bash
+    docker-compose up -d
+    ```
 
 ---
 
-## 5. Hướng Dẫn Khởi Động Nhanh (Setup & Execution)
+## 📖 Usage Guide
 
-### Bước 1: Kích Hoạt Nền Tảng Phụ Trợ (Docker)
-Đảm bảo Redis Broker và UI Flower đã sẵn sàng:
+### 1. Unified CLI Mode (Recommended)
+The `tts_cli.py` script automates the entire process: starting services, uploading the PDF, polling for completion, and downloading the result.
+
 ```bash
-docker-compose up -d
-```
-Trang Dashboard Celery: Mở trình duyệt vào http://localhost:5555
+# Basic usage
+python tts_cli.py path/to/your/document.pdf
 
-### Bước 2: Kích Hoạt Tầng AI (Celery Worker)
-Mở một terminal chuyên biệt dành riêng cho Engine nền:
-```bash
-# Đối với Windows
-.\venv\Scripts\celery -A worker.celery_app worker --loglevel=info --pool=solo
+# Specify output location
+python tts_cli.py input.pdf -o ./my_audios/output.mp3
+
+# Skip service startup if already running
+python tts_cli.py input.pdf --skip-services
 ```
 
-### Bước 3: Kích Hoạt Tầng Giao Tiếp (FastAPI)
-Mở một terminal khác và khởi chạy Uvicorn Server:
+### 2. Manual/API Mode
+If you prefer to manage services manually:
+
+-   **Start Worker**: `celery -A worker.celery_app worker --loglevel=info --pool=solo`
+-   **Start API**: `uvicorn app.main:app --reload`
+-   **Monitor Workers**: Visit `http://localhost:5555` (Flower)
+-   **API Documentation**: Visit `http://localhost:8000/docs`
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+The project includes a comprehensive suite of tests:
+
 ```bash
-.\venv\Scripts\uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Run all tests
+pytest tests/
+
+# Test specific modules
+pytest tests/test_nlp_pipeline.py
+pytest tests/test_pdf_parser.py
 ```
-Tài liệu Swagger API: http://localhost:8000/docs
+
+Key test files:
+-   `test_e2e.py`: Full system integration test.
+-   `test_user_pdf.py`: Validates processing with real-world PDF samples.
+-   `test_vietnormalizer.py`: Ensures linguistic correctness for Vietnamese text.
+
+---
+
+## 🛡️ Reliability & Security
+
+-   **Resource Management**: Strict prefetch limits and timeout controls prevent OOM crashes on large documents.
+-   **File Sanitization**: Automatic UUID renaming and path validation prevent injection attacks.
+-   **Error Handling**: Robust retry logic and comprehensive logging (`fastapi_server.log`, `celery_worker.log`).
+-   **Privacy**: Temporary files are automatically cleaned up after processing is complete.
