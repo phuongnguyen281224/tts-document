@@ -173,7 +173,7 @@ def chunk_normalized_text(text: str) -> list[dict]:
 def clean_raw_text(text: str) -> str:
     """
     Tiền xử lý văn bản thô: Dọn dẹp ký tự rác, khoảng trắng thừa,
-    và nối lại các từ bị ngắt dòng có dấu gạch ngang (thường gặp khi trích xuất PDF).
+    và xóa bỏ các trích dẫn nguồn (citations) thường gặp khi trích xuất PDF.
     """
     if not text or not isinstance(text, str):
         return ""
@@ -183,11 +183,30 @@ def clean_raw_text(text: str) -> str:
     
     # 2. Xóa các ký tự zero-width (zero-width space, non-joiner, etc.)
     text = re.sub(r'[\u200B-\u200D\uFEFF]', '', text)
+
+    # 3. Xóa trích dẫn trong ngoặc vuông: [1], [1, 2], [1-5]
+    text = re.sub(r'\[\d+(?:[,\-\s]+\d+)*\]', '', text)
     
-    # 3. Chuyển đổi khoảng trắng (newlines quá nhiều) thành tối đa 2 newlines (paragraph break)
+    # 4. Xóa trích dẫn trong ngoặc đơn: (1), (12) 
+    # Thường đứng sau một từ hoặc cuối câu
+    text = re.sub(r'\(\d+\)', '', text)
+
+    # 5. Xóa ký tự superscript Unicode (¹, ², ³, ...)
+    text = re.sub(r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ]', '', text)
+
+    # 6. Xóa số dính liền sau dấu câu: "thành.2" -> "thành.", "triển, 3" -> "triển,"
+    # Dùng negative lookbehind (?<!\d) để tránh xóa phần thập phân của số (như 3.14)
+    text = re.sub(r'(?<!\d)([.,?!:;])\s*\d+\b', r'\1', text)
+
+    # 7. Xóa số dính liền cuối từ: "nhân loại5" -> "nhân loại"
+    # Chỉ áp dụng cho từ có ít nhất 2 chữ cái để tránh xóa các mã/ký hiệu đặc biệt (A1, B2)
+    # [A-ZÀ-Ỹ] dùng để bắt các ký tự tiếng Việt có dấu
+    text = re.sub(r'\b([A-Za-zÀ-Ỹà-ỹ]{2,})\d+\b', r'\1', text)
+    
+    # 8. Chuyển đổi khoảng trắng (newlines quá nhiều) thành tối đa 2 newlines (paragraph break)
     text = re.sub(r'\n{3,}', '\n\n', text)
     
-    # 4. Gom các khoảng trắng ngang thừa (bao gồm tab) thành 1 space duy nhất
+    # 9. Gom các khoảng trắng ngang thừa (bao gồm tab) thành 1 space duy nhất
     text = re.sub(r'[ \t]+', ' ', text)
     
     return text.strip()

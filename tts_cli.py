@@ -7,6 +7,9 @@ import requests
 import re
 import shutil
 
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 API_BASE = "http://localhost:8000"
 POLL_INTERVAL = 3
 MAX_WAIT = 1800 # 30 mins max to wait for large PDFs

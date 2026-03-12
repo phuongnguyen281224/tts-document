@@ -17,6 +17,34 @@ COMPLETED_DIR = "completed_audios"
 # Global TTS Engine cache instance. Lazily instantiating for VRAM reuse between task jobs.
 _tts_engine = None
 
+def _configure_pydub():
+    """
+    Configure pydub to use a reliable FFmpeg binary, avoiding Windows AppX shims
+    which can cause WinError 448 (untrusted mount point).
+    """
+    import sys
+    from pydub.utils import which
+    
+    # Check if we are on Windows and current FFmpeg is likely a shim
+    current_ffmpeg = which("ffmpeg")
+    is_shim = current_ffmpeg and ("WinGet" in current_ffmpeg or "WindowsApps" in current_ffmpeg)
+    
+    if sys.platform == 'win32' and (not current_ffmpeg or is_shim):
+        # Potential locations for full FFmpeg binaries on this specific system
+        candidate_paths = [
+            r"C:\Users\phuon\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin\ffmpeg.exe",
+            r"C:\Users\phuon\AppData\Local\CapCut\Apps\7.9.0.3294\ffmpeg.exe"
+        ]
+        
+        for p in candidate_paths:
+            if os.path.exists(p):
+                print(f"[*] Configuring pydub to use FFmpeg at: {p}", flush=True)
+                AudioSegment.converter = p
+                break
+
+# Run configuration once at module load
+_configure_pydub()
+
 def get_tts_engine():
     global _tts_engine
     if _tts_engine is None:
@@ -222,9 +250,11 @@ def process_pdf_task(self, file_path: str, prompt_path: str = None):
         }
 
     except Exception as e:
-        print(f"[{task_id}] LỖI QUY TRÌNH: {e}", flush=True)
-        # We RE-RAISE to let autoretry_for catch it
-        raise e
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"[{task_id}] LỖI QUY TRÌNH: {error_detail}", flush=True)
+        # Wrap exception to ensure it's JSON serializable for the CLI reporter
+        raise ValueError(str(e))
 
 @celery_app.task(bind=True, name="process_raw_text")
 def process_raw_text_task(self, text: str, prompt_path: str = None):
